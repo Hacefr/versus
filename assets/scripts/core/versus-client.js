@@ -1,6 +1,24 @@
 (function () {
   window._totalsecretcoins = 999;
 
+  // Prevent Web Dashers from ever auto-popping the "NEWS" / Update Log modal
+  try {
+    localStorage.setItem('gd_lastSeenUpdateLog', '999999');
+    localStorage.setItem('lastSeenUpdateLog', '999999');
+    localStorage.setItem('updateLogSeen', 'true');
+    localStorage.setItem('newsSeen', 'true');
+  } catch (e) {}
+
+  function getBrowserId() {
+    let bId = localStorage.getItem('wd_browser_id');
+    if (!bId) {
+      const m = document.cookie.match(/(?:^|;\s*)wd_browser_id=([^;]+)/);
+      bId = m ? m[1] : ('b_' + Math.random().toString(36).slice(2) + Date.now().toString(36));
+      localStorage.setItem('wd_browser_id', bId);
+    }
+    return bId;
+  }
+
   if (Array.isArray(window.allLevels)) {
     window.allLevels = window.allLevels.filter(lvl => {
       const id = lvl && lvl[2];
@@ -31,11 +49,16 @@
       }).catch(() => {});
       if (window.VersusSocket && window.VersusSocket.connected) {
         window.VersusSocket.emit('versus:auth', {
-          username: window.AccountAPI?.currentUser?.username,
+          username: versusState.myUser?.username,
+          browserId: getBrowserId(),
           lastIcon: icon
         });
       }
-    }, 250);
+      if (versusState.myUser) {
+        versusState.myUser.lastIcon = icon;
+        refreshMainHubProfile();
+      }
+    }, 200);
   }
 
   const origSetItem = Storage.prototype.setItem;
@@ -46,7 +69,71 @@
     }
   };
 
-  // --- GD ICON CANVAS RENDERER ---
+  // --- MOBILE FULLSCREEN + LANDSCAPE ORIENTATION LOCK HELPER ---
+  window.toggleClientFullscreenAndLock = async function () {
+    try {
+      const docEl = document.documentElement;
+      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        if (docEl.requestFullscreen) await docEl.requestFullscreen();
+        else if (docEl.webkitRequestFullscreen) await docEl.webkitRequestFullscreen();
+      }
+      if (screen.orientation && screen.orientation.lock) {
+        await screen.orientation.lock('landscape').catch(() => {});
+      }
+    } catch (e) {}
+  };
+
+  // --- GD DIFFICULTY FACE + RING RENDERER (GJ_GameSheet03.png) ---
+  const SHEET03_COORDS = {
+    'diffIcon_01_btn_001.png': { x: 1886, y: 977,  w: 60, h: 60 },
+    'diffIcon_02_btn_001.png': { x: 1886, y: 1038, w: 60, h: 60 },
+    'diffIcon_03_btn_001.png': { x: 1886, y: 1099, w: 60, h: 60 },
+    'diffIcon_04_btn_001.png': { x: 1886, y: 1160, w: 60, h: 60 },
+    'diffIcon_05_btn_001.png': { x: 1886, y: 1221, w: 60, h: 60 },
+    'diffIcon_06_btn_001.png': { x: 1447, y: 1747, w: 67, h: 62 },
+    'diffIcon_07_btn_001.png': { x: 1825, y: 67,   w: 66, h: 61 },
+    'diffIcon_10_btn_001.png': { x: 728,  y: 1670, w: 80, h: 67 },
+    'GJ_featuredCoin_001.png': { x: 1654, y: 562,  w: 82, h: 84 },
+    'GJ_epicCoin_001.png':     { x: 384,  y: 1482, w: 97, h: 97 }
+  };
+  let sheet03Promise = null;
+  function getSheet03() {
+    if (!sheet03Promise) {
+      sheet03Promise = new Promise((res, rej) => {
+        const i = new Image();
+        i.onload = () => res(i);
+        i.onerror = rej;
+        i.src = 'assets/sheets/GJ_GameSheet03.png';
+      });
+    }
+    return sheet03Promise;
+  }
+  async function renderRankBadge(canvas, rankInfo) {
+    if (!canvas || !rankInfo) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    try {
+      const img = await getSheet03();
+      const cw = canvas.width, ch = canvas.height;
+      if (rankInfo.ring === 2) {
+        const r = SHEET03_COORDS['GJ_epicCoin_001.png'];
+        const scale = Math.min(cw / r.w, ch / r.h) * 0.98;
+        const dw = r.w * scale, dh = r.h * scale;
+        ctx.drawImage(img, r.x, r.y, r.w, r.h, (cw - dw) / 2, (ch - dh) / 2 - 2, dw, dh);
+      } else if (rankInfo.ring === 1) {
+        const r = SHEET03_COORDS['GJ_featuredCoin_001.png'];
+        const scale = Math.min(cw / r.w, ch / r.h) * 0.88;
+        const dw = r.w * scale, dh = r.h * scale;
+        ctx.drawImage(img, r.x, r.y, r.w, r.h, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+      }
+      const f = SHEET03_COORDS[rankInfo.face] || SHEET03_COORDS['diffIcon_01_btn_001.png'];
+      const fScale = (cw * 0.62) / Math.max(f.w, f.h);
+      const fw = f.w * fScale, fh = f.h * fScale;
+      ctx.drawImage(img, f.x, f.y, f.w, f.h, (cw - fw) / 2, (ch - fh) / 2 + (rankInfo.ring === 2 ? 3 : 0), fw, fh);
+    } catch (e) {}
+  }
+
+  // --- GD CUBE ICON RENDERER ---
   const iconAtlasCache = {};
   function hexToRgb(hex) {
     const clean = String(hex || '04FF00').replace(/^#/, '').padStart(6, '0');
@@ -147,18 +234,29 @@
     } catch (e) {}
   }
 
-  // --- VERSUS & GLOBED GHOST STATE ---
+  // --- STATE & SOCKET ---
   const versusState = {
+    engineReady: false,
     activeMatch: false,
+    inQueue: false,
+    queueIsRanked: false,
+    rankedInQueue: 0,
+    unrankedInQueue: 0,
     room: null,
     levels: [],
     publicRooms: [],
     myUser: null,
+    authMode: 'login',
+    lbTab: 'ranked',
+    cachedLb: { rankedLeaderboard: [], unrankedLeaderboard: [] },
     lastSentPct: -1,
     lastAttempts: 1,
     lastDiedState: false,
+    jumpsCount: 0,
+    prevUpKeyDown: false,
     lastGhostEmit: 0,
-    opponentGhost: null // { x, y, targetX, targetY, angle, dead, username, lastIcon }
+    opponentGhost: null,
+    rotateDismissed: false
   };
   window.VersusState = versusState;
 
@@ -166,35 +264,64 @@
   window.VersusSocket = socket;
 
   async function initUserAndSocket() {
-    let user = null;
-    if (window.AccountAPI) {
-      user = await window.AccountAPI.checkSession();
+    try {
+      const res = await fetch('/api/auth/me', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        versusState.myUser = data.user;
+        if (window.AccountAPI) window.AccountAPI.currentUser = data.user;
+        if (data.browserId) localStorage.setItem('wd_browser_id', data.browserId);
+      } else {
+        versusState.myUser = null;
+      }
+    } catch (e) {
+      versusState.myUser = null;
     }
-    versusState.myUser = user;
+
     socket.emit('versus:auth', {
-      username: user ? user.username : 'Guest_' + Math.floor(1000 + Math.random() * 9000),
+      username: versusState.myUser ? versusState.myUser.username : ('Guest_' + Math.floor(1000 + Math.random() * 9000)),
+      browserId: getBrowserId(),
       lastIcon: getLocalIcon()
     });
-    updateTopBarAccount();
+    refreshMainHubUI();
   }
 
   socket.on('connect', () => initUserAndSocket());
 
   socket.on('versus:authed', (data) => {
-    if (data.user) versusState.myUser = data.user;
+    if (data.user && versusState.myUser) {
+      versusState.myUser = Object.assign(versusState.myUser, data.user);
+    }
     if (data.levels) versusState.levels = data.levels;
     if (data.rooms) versusState.publicRooms = data.rooms;
-    updateTopBarAccount();
+    if (data.rankedInQueue !== undefined) versusState.rankedInQueue = data.rankedInQueue;
+    if (data.unrankedInQueue !== undefined) versusState.unrankedInQueue = data.unrankedInQueue;
+    refreshMainHubUI();
+    renderLobbyModalContent();
+  });
+
+  socket.on('versus:queue_status', (data) => {
+    versusState.inQueue = !!data.inQueue;
+    versusState.queueIsRanked = !!data.isRanked;
+    renderLobbyModalContent();
+  });
+
+  socket.on('versus:queue_counts', (data) => {
+    versusState.rankedInQueue = data.rankedInQueue || 0;
+    versusState.unrankedInQueue = data.unrankedInQueue || 0;
     renderLobbyModalContent();
   });
 
   socket.on('versus:rooms_list', (data) => {
     if (data.rooms) versusState.publicRooms = data.rooms;
     if (data.levels) versusState.levels = data.levels;
+    if (data.rankedInQueue !== undefined) versusState.rankedInQueue = data.rankedInQueue;
+    if (data.unrankedInQueue !== undefined) versusState.unrankedInQueue = data.unrankedInQueue;
     renderLobbyModalContent();
   });
 
   socket.on('versus:room_joined', (room) => {
+    versusState.inQueue = false;
     versusState.room = room;
     renderLobbyModalContent();
   });
@@ -209,14 +336,17 @@
   });
 
   socket.on('versus:match_start', (room) => {
+    versusState.inQueue = false;
     versusState.room = room;
     versusState.activeMatch = true;
     versusState.lastSentPct = 0;
     versusState.lastAttempts = 1;
     versusState.lastDiedState = false;
+    versusState.jumpsCount = 0;
     versusState.opponentGhost = null;
     closeVersusLobby();
     hideVictoryModal();
+    closeLeaderboardModal();
     launchMainLevelForVersus(room.level.id);
   });
 
@@ -224,14 +354,9 @@
     if (!versusState.activeMatch) return;
     if (!versusState.opponentGhost) {
       versusState.opponentGhost = {
-        x: g.x,
-        y: g.y,
-        targetX: g.x,
-        targetY: g.y,
-        angle: g.angle || 0,
-        dead: g.dead,
-        username: g.username,
-        lastIcon: g.lastIcon
+        x: g.x, y: g.y, targetX: g.x, targetY: g.y,
+        angle: g.angle || 0, dead: g.dead,
+        username: g.username, lastIcon: g.lastIcon
       };
     } else {
       versusState.opponentGhost.targetX = g.x;
@@ -254,8 +379,13 @@
     versusState.activeMatch = false;
     versusState.opponentGhost = null;
     if (room.winner && versusState.myUser && room.winner.socketId === socket.id) {
-      versusState.myUser.listPoints = room.winner.newTotalPoints;
-      updateTopBarAccount();
+      if (room.isRanked) {
+        versusState.myUser.rankedPoints = room.winner.newTotalPoints;
+        versusState.myUser.rankInfo = room.winner.rankInfo;
+      } else {
+        versusState.myUser.unrankedPoints = room.winner.newTotalPoints;
+      }
+      refreshMainHubProfile();
     }
     updateInGameHUD();
     showVictoryModal(room);
@@ -288,189 +418,432 @@
     scene.load.start();
   }
 
-  // --- UI OVERLAYS ---
+  // --- TRIGGER ENGINE FEATURES FROM OUR CUSTOM CLIENT ---
+  window.openSoloPractice = function () {
+    const scene = window._gameScene;
+    if (!scene) return;
+    if (scene._newsPopup && scene._closeNewsPopup) {
+      try { scene._closeNewsPopup(); } catch (e) {}
+    }
+    scene._openLevelSelect();
+  };
+
+  window.openCharacterEditor = function () {
+    const scene = window._gameScene;
+    if (!scene) return;
+    if (scene._newsPopup && scene._closeNewsPopup) {
+      try { scene._closeNewsPopup(); } catch (e) {}
+    }
+    if (typeof scene._triggerGarageOpen === 'function') {
+      scene._triggerGarageOpen();
+    }
+  };
+
+  window.openGameSettings = function () {
+    const scene = window._gameScene;
+    if (!scene) return;
+    if (typeof scene._showSettingsScreen === 'function') {
+      scene._showSettingsScreen();
+    }
+  };
+
+  // --- FULL-SCREEN OPAQUE CUSTOM CLIENT STYLES + MOBILE LANDSCAPE LOCK & RESPONSIVE UI ---
   function injectStyles() {
     if (document.getElementById('versus-client-styles')) return;
     const style = document.createElement('style');
     style.id = 'versus-client-styles';
     style.textContent = `
-      #wdTopAccountBar {
-        position: fixed;
-        top: 10px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 9000;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        background: rgba(8, 24, 56, 0.92);
-        border: 2px solid #5ce1e6;
-        border-radius: 999px;
-        padding: 6px 16px;
-        font-family: 'Trebuchet MS', Arial, sans-serif;
-        color: #fff;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.6);
+      html, body {
+        touch-action: manipulation;
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
       }
-      #wdTopAccountBar a, #wdTopAccountBar button {
-        background: linear-gradient(180deg, #88ff2b, #36a300);
-        color: #fff;
-        font-weight: 900;
-        text-decoration: none;
-        padding: 5px 12px;
-        border-radius: 999px;
-        border: 2px solid #fff;
-        font-size: 12px;
-        cursor: pointer;
-        text-shadow: 0 1px 0 #000;
-      }
-      #wdTopAccountBar .vs-btn { background: linear-gradient(180deg, #ffcc00, #e65c00); }
-      #wdVersusLobbyOverlay, #wdVersusVictoryOverlay {
+      /* Mobile Portrait Rotate / Lock Screen */
+      #wdMobileLockOverlay {
         position: fixed;
         inset: 0;
-        background: rgba(2, 8, 24, 0.85);
+        z-index: 10000;
+        background: #041028 url('assets/sprites/game_bg_01_001.png') repeat-x center bottom;
+        background-size: cover;
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        text-align: center;
+        font-family: 'Pusab', 'Trebuchet MS', 'Arial Black', sans-serif;
+        color: #fff;
+        text-shadow: 0 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000;
+      }
+      @media screen and (max-width: 900px) and (orientation: portrait) {
+        #wdMobileLockOverlay.active-lock {
+          display: flex !important;
+        }
+      }
+      #wdMainHubOverlay {
+        position: fixed;
+        inset: 0;
+        z-index: 8500;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 12px;
+        background: #051638 url('assets/sprites/game_bg_01_001.png') repeat-x center bottom;
+        background-size: cover;
+        font-family: 'Pusab', 'Trebuchet MS', 'Arial Black', sans-serif;
+        color: #fff;
+        text-shadow: 0 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000;
+        pointer-events: auto;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      #wdMainHubOverlay::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background: radial-gradient(circle at 50% 30%, rgba(0, 120, 255, 0.25), rgba(2, 8, 22, 0.92));
+        z-index: 0;
+        pointer-events: none;
+      }
+      #wdMainHubOverlay > * {
+        position: relative;
+        z-index: 1;
+      }
+      .hub-card {
+        width: 100%;
+        max-width: 760px;
+        background-color: #995533;
+        border-style: solid;
+        border-width: 22px;
+        border-image: url('assets/sprites/GJ_square01.png') 24 fill stretch;
+        padding: 8px 14px;
+        box-shadow: 0 16px 45px rgba(0,0,0,0.85);
+        max-height: 88vh;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .vs-gd-inner {
+        background-color: rgba(0,0,0,0.45);
+        border-style: solid;
+        border-width: 14px;
+        border-image: url('assets/sprites/GJ_square02.png') 16 fill stretch;
+        padding: 6px 10px;
+        margin-bottom: 10px;
+      }
+      .gd-sprite-btn {
+        border-style: solid;
+        border-width: 12px;
+        border-image: url('assets/sprites/GJ_button_01.png') 14 fill stretch;
+        background: transparent;
+        color: #fff;
+        font-family: 'Pusab', 'Trebuchet MS', 'Arial Black', sans-serif;
+        font-weight: 900;
+        font-size: 0.98rem;
+        text-decoration: none;
+        text-transform: uppercase;
+        text-shadow: 0 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000;
+        padding: 2px 10px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        transition: transform 0.1s;
+        user-select: none;
+        touch-action: manipulation;
+      }
+      .gd-sprite-btn:hover { transform: scale(1.03); }
+      .gd-sprite-btn:active { transform: scale(0.95); }
+      .gd-btn-02 { border-image-source: url('assets/sprites/GJ_button_02.png'); }
+      .gd-btn-03 { border-image-source: url('assets/sprites/GJ_button_03.png'); }
+      .gd-btn-04 { border-image-source: url('assets/sprites/GJ_button_04.png'); }
+
+      .hub-menu-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        margin-top: 8px;
+      }
+      .icon-box-frame {
+        width: 58px;
+        height: 58px;
+        background: rgba(0,0,0,0.55);
+        border: 3px solid #000;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .form-input-gd {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 3px solid #000;
+        background: rgba(0,0,0,0.7);
+        color: #fff;
+        font-size: 1rem;
+        font-weight: 900;
+        margin-bottom: 10px;
+        outline: none;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      #wdVersusLobbyOverlay, #wdVersusVictoryOverlay, #wdLeaderboardOverlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.84);
         z-index: 9500;
         display: none;
         align-items: center;
         justify-content: center;
-        font-family: 'Trebuchet MS', Arial, sans-serif;
+        font-family: 'Pusab', 'Trebuchet MS', Arial, sans-serif;
         color: #fff;
-        padding: 16px;
+        text-shadow: 0 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000;
+        padding: 10px;
       }
-      .vs-modal {
+      .vs-gd-modal {
         width: 100%;
-        max-width: 800px;
-        background: linear-gradient(180deg, #102e63, #071633);
-        border: 4px solid #5ce1e6;
-        border-radius: 18px;
-        padding: 22px;
-        box-shadow: 0 15px 40px rgba(0,0,0,0.8);
-        max-height: 92vh;
+        max-width: 820px;
+        background-color: #995533;
+        border-style: solid;
+        border-width: 20px;
+        border-image: url('assets/sprites/GJ_square01.png') 24 fill stretch;
+        padding: 8px 12px;
+        box-shadow: 0 15px 40px rgba(0,0,0,0.85);
+        max-height: 94vh;
         overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
       }
       .vs-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        border-bottom: 2px solid rgba(255,255,255,0.15);
-        padding-bottom: 12px;
-        margin-bottom: 16px;
+        margin-bottom: 10px;
+        gap: 8px;
       }
-      .vs-header h2 { color: #c1fb3d; font-size: 1.7rem; font-weight: 900; text-shadow: 0 3px 0 #000; }
-      .vs-btn-action {
-        padding: 10px 18px;
-        border-radius: 12px;
-        border: 2px solid #fff;
-        font-weight: 900;
-        font-size: 0.95rem;
-        color: #fff;
-        cursor: pointer;
-        text-shadow: 0 2px 0 #000;
-        text-transform: uppercase;
-      }
-      .vs-green { background: linear-gradient(180deg, #88ff2b, #36a300); }
-      .vs-blue { background: linear-gradient(180deg, #38d6ff, #0066cc); }
-      .vs-orange { background: linear-gradient(180deg, #ffcc00, #e65c00); }
-      .vs-red { background: linear-gradient(180deg, #ff5e5e, #b30000); }
+      .vs-header h2 { color: #ffd700; font-size: clamp(1.1rem, 3vw, 1.55rem); font-weight: 900; }
       .vs-players-cards {
         display: grid;
         grid-template-columns: 1fr auto 1fr;
-        gap: 14px;
+        gap: 10px;
         align-items: center;
-        margin: 18px 0;
+        margin: 10px 0;
       }
       .vs-pcard {
-        background: rgba(0,0,0,0.45);
-        border: 2px solid rgba(92,225,230,0.5);
-        border-radius: 14px;
-        padding: 16px;
+        background: rgba(0,0,0,0.5);
+        border: 3px solid #000;
+        border-radius: 12px;
+        padding: 10px;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
         text-align: center;
       }
       .vs-room-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        background: rgba(0,0,0,0.4);
-        border: 1px solid rgba(255,255,255,0.2);
+        background: rgba(0,0,0,0.5);
+        border: 3px solid #000;
         border-radius: 10px;
-        padding: 10px 14px;
+        padding: 8px 10px;
         margin-bottom: 8px;
+        flex-wrap: wrap;
+        gap: 8px;
       }
       #wdVersusHUD {
         position: fixed;
-        top: 48px;
+        top: 6px;
         left: 50%;
         transform: translateX(-50%);
         z-index: 8900;
-        width: min(650px, 94vw);
-        background: rgba(5, 14, 35, 0.85);
-        border: 2px solid #5ce1e6;
-        border-radius: 12px;
-        padding: 8px 14px;
-        font-family: 'Trebuchet MS', Arial, sans-serif;
+        width: min(620px, 94vw);
+        background-color: #995533;
+        border-style: solid;
+        border-width: 12px;
+        border-image: url('assets/sprites/GJ_square01.png') 14 fill stretch;
+        padding: 2px 8px;
+        font-family: 'Pusab', 'Trebuchet MS', Arial, sans-serif;
         color: #fff;
+        text-shadow: 0 2px 0 #000;
         display: none;
         pointer-events: none;
       }
       .hud-rule-tag {
         text-align: center;
-        font-size: 11px;
+        font-size: 10px;
         font-weight: 900;
-        color: #c1fb3d;
-        margin-bottom: 4px;
-        text-transform: uppercase;
+        color: #ffd700;
+        margin-bottom: 2px;
       }
       .hud-p-row {
         display: flex;
         align-items: center;
-        gap: 10px;
-        margin: 4px 0;
-        font-size: 12px;
+        gap: 8px;
+        margin: 3px 0;
+        font-size: 11px;
         font-weight: 900;
       }
-      .hud-name { width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .hud-name { width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .hud-bar-bg {
         flex: 1;
         height: 12px;
-        background: rgba(255,255,255,0.12);
+        background: #111 url('assets/sprites/slidergroove2.png') no-repeat center/100% 100%;
         border-radius: 999px;
         overflow: hidden;
-        border: 1px solid rgba(255,255,255,0.3);
+        border: 2px solid #000;
       }
       .hud-bar-fill { height: 100%; width: 0%; transition: width 0.08s linear; }
-      .hud-pct { width: 105px; text-align: right; color: #ffd700; }
+      .hud-pct { width: 95px; text-align: right; color: #ffd700; }
+
+      /* Mobile Landscape & Compact Screen Optimizations */
+      @media screen and (max-height: 500px), screen and (max-width: 680px) {
+        #wdMainHubOverlay { padding: 6px; justify-content: flex-start; }
+        .hub-banner-img { max-width: min(260px, 65vw) !important; }
+        .hub-card { border-width: 14px; padding: 4px 8px; max-height: 94vh; }
+        .vs-gd-inner { border-width: 10px; padding: 4px 8px; margin-bottom: 6px; }
+        .gd-sprite-btn { border-width: 9px; font-size: 0.82rem !important; padding: 2px 6px !important; }
+        .icon-box-frame { width: 44px; height: 44px; }
+        .vs-gd-modal { border-width: 14px; padding: 6px 8px; }
+        .vs-players-cards { grid-template-columns: 1fr; gap: 6px; }
+      }
     `;
     document.head.appendChild(style);
   }
 
   function createDOMElements() {
     injectStyles();
-    if (!document.getElementById('wdTopAccountBar')) {
-      const bar = document.createElement('div');
-      bar.id = 'wdTopAccountBar';
-      bar.innerHTML = `
-        <a href="/">← Portal & Leaderboards</a>
-        <span id="wdBarUsername" style="font-weight:900;">Guest</span>
-        <span id="wdBarPoints" style="color:#ffd700; font-weight:900;">★ 0 pts</span>
-        <button class="vs-btn" onclick="window.openVersusLobby()">⚔ 1v1 VERSUS</button>
+
+    if (!document.getElementById('wdMobileLockOverlay')) {
+      const lock = document.createElement('div');
+      lock.id = 'wdMobileLockOverlay';
+      lock.className = 'active-lock';
+      lock.innerHTML = `
+        <div class="hub-card" style="max-width:380px;">
+          <h2 style="color:#ffd700; font-size:1.5rem; margin-bottom:8px;">🔄 ROTATE DEVICE</h2>
+          <div class="vs-gd-inner" style="font-size:0.95rem; line-height:1.4;">
+            Web Dashers 1v1 Versus plays best in <b>Landscape Mode</b>! Rotate your phone sideways or tap below to lock fullscreen landscape.
+          </div>
+          <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+            <button class="gd-sprite-btn gd-btn-02" onclick="window.toggleClientFullscreenAndLock()">⛶ FULLSCREEN & LOCK LANDSCAPE</button>
+            <button class="gd-sprite-btn gd-btn-04" onclick="document.getElementById('wdMobileLockOverlay').classList.remove('active-lock')">Continue Anyway</button>
+          </div>
+        </div>
       `;
-      document.body.appendChild(bar);
+      document.body.appendChild(lock);
     }
+
+    if (!document.getElementById('wdMainHubOverlay')) {
+      const hub = document.createElement('div');
+      hub.id = 'wdMainHubOverlay';
+      hub.innerHTML = `
+        <div style="text-align:center; margin-bottom:8px;">
+          <img class="hub-banner-img" src="wd_branding/wordmark_gd/wordmark_gd.png" onerror="this.style.display='none'; document.getElementById('wdFallbackLogo').style.display='block';" style="max-width:min(440px, 84vw); height:auto; filter:drop-shadow(0 6px 10px rgba(0,0,0,0.75));" />
+          <h1 id="wdFallbackLogo" style="display:none; font-size:2.4rem; color:#c1fb3d;">WEB DASHERS</h1>
+          <div style="color:#ffd700; font-size:0.95rem; letter-spacing:1.5px; margin-top:2px;">⚔ 1v1 VERSUS · RANKED & PRACTICE CLIENT ⚔</div>
+        </div>
+
+        <!-- AUTH VIEW (If not logged in) -->
+        <div id="wdHubAuthCard" class="hub-card" style="max-width:460px; display:none;">
+          <div style="display:flex; gap:10px; margin-bottom:10px;">
+            <button class="gd-sprite-btn" style="flex:1;" id="hubTabLogin" onclick="window.switchHubAuth('login')">Login</button>
+            <button class="gd-sprite-btn gd-btn-04" style="flex:1;" id="hubTabRegister" onclick="window.switchHubAuth('register')">Create Account</button>
+          </div>
+          <div id="hubAuthError" style="display:none; color:#ff6b6b; background:rgba(0,0,0,0.65); padding:8px; border-radius:8px; margin-bottom:10px; font-weight:900;"></div>
+          <form onsubmit="window.submitHubAuth(event)">
+            <label style="color:#ffd700; font-size:0.85rem; display:block; margin-bottom:4px;">USERNAME</label>
+            <input type="text" id="hubUsername" class="form-input-gd" required maxlength="20" placeholder="Enter Dasher Name..." />
+            <label style="color:#ffd700; font-size:0.85rem; display:block; margin-bottom:4px;">PASSWORD</label>
+            <input type="password" id="hubPassword" class="form-input-gd" required placeholder="••••••••" />
+            <button type="submit" class="gd-sprite-btn" style="width:100%; font-size:1.05rem;" id="hubAuthSubmitBtn">LOGIN TO ACCOUNT</button>
+          </form>
+          <div style="margin-top:10px; display:flex; gap:8px;">
+            <button class="gd-sprite-btn gd-btn-02" style="flex:1;" onclick="window.openLeaderboardModal()">🏆 LEADERBOARDS</button>
+            <button class="gd-sprite-btn gd-btn-04" onclick="window.toggleClientFullscreenAndLock()">⛶ FULLSCREEN</button>
+          </div>
+        </div>
+
+        <!-- LOGGED IN MAIN CLIENT HUB -->
+        <div id="wdHubMenuCard" class="hub-card" style="display:none;">
+          <div class="vs-gd-inner" style="display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <div class="icon-box-frame"><canvas id="hubMyCubeCanvas" width="48" height="48"></canvas></div>
+              <div class="icon-box-frame"><canvas id="hubMyRankCanvas" width="50" height="50"></canvas></div>
+              <div>
+                <div id="hubWelcomeName" style="font-size:1.3rem; font-weight:900; color:#fff;">Player</div>
+                <div style="display:flex; flex-wrap:wrap; gap:8px; font-size:0.85rem; margin-top:2px;">
+                  <span id="hubMyRankName" style="color:#00ffff; font-weight:900;">Easy I</span>
+                  <span id="hubMyRankedRP" style="color:#ffd700; font-weight:900;">★ 0 Ranked RP</span>
+                  <span id="hubMyUnrankedPts" style="color:#c1fb3d; font-weight:900;">⚔ 0 Unranked Pts</span>
+                </div>
+              </div>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px;">
+              <button class="gd-sprite-btn gd-btn-04" style="font-size:0.78rem;" onclick="window.toggleClientFullscreenAndLock()">⛶ Fullscreen</button>
+              <button class="gd-sprite-btn gd-btn-04" style="font-size:0.78rem;" onclick="window.openGameSettings()">⚙ Settings</button>
+              <button class="gd-sprite-btn gd-btn-03" style="font-size:0.78rem;" onclick="window.hubLogout()">Logout</button>
+            </div>
+          </div>
+
+          <div class="hub-menu-grid">
+            <button class="gd-sprite-btn gd-btn-02" style="font-size:1.08rem; padding:10px;" onclick="window.openVersusLobby()">
+              ⚔ 1v1 VERSUS MODE
+            </button>
+            <button class="gd-sprite-btn" style="font-size:1.08rem; padding:10px;" onclick="window.openSoloPractice()">
+              🎯 SOLO PRACTICE
+            </button>
+            <button class="gd-sprite-btn gd-btn-04" style="font-size:1.05rem; padding:10px;" onclick="window.openCharacterEditor()">
+              🎨 CHARACTER EDITOR
+            </button>
+            <button class="gd-sprite-btn gd-btn-02" style="font-size:1.05rem; padding:10px;" onclick="window.openLeaderboardModal()">
+              🏆 LEADERBOARDS
+            </button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(hub);
+    }
+
+    if (!document.getElementById('wdLeaderboardOverlay')) {
+      const lb = document.createElement('div');
+      lb.id = 'wdLeaderboardOverlay';
+      lb.innerHTML = `
+        <div class="vs-gd-modal">
+          <div class="vs-header">
+            <h2>🏆 IN-GAME LEADERBOARDS</h2>
+            <button class="gd-sprite-btn gd-btn-03" onclick="window.closeLeaderboardModal()">✕ Close</button>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+            <button class="gd-sprite-btn" id="lbTabBtnRanked" onclick="window.switchLbTab('ranked')">🏆 RANKED</button>
+            <button class="gd-sprite-btn gd-btn-04" id="lbTabBtnUnranked" onclick="window.switchLbTab('unranked')">⚔ UNRANKED</button>
+            <button class="gd-sprite-btn gd-btn-02" style="margin-left:auto;" onclick="window.fetchLeaderboards()">↻ Refresh</button>
+          </div>
+          <div class="vs-gd-inner" id="wdLeaderboardRows" style="max-height:58vh; overflow-y:auto;">
+            <div style="text-align:center; padding:20px;">Loading top players...</div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(lb);
+    }
+
     if (!document.getElementById('wdVersusLobbyOverlay')) {
       const lob = document.createElement('div');
       lob.id = 'wdVersusLobbyOverlay';
-      lob.innerHTML = `<div class="vs-modal" id="wdVersusLobbyContent"></div>`;
+      lob.innerHTML = `<div class="vs-gd-modal" id="wdVersusLobbyContent"></div>`;
       document.body.appendChild(lob);
     }
+
     if (!document.getElementById('wdVersusVictoryOverlay')) {
       const vic = document.createElement('div');
       vic.id = 'wdVersusVictoryOverlay';
-      vic.innerHTML = `<div class="vs-modal" id="wdVersusVictoryContent" style="max-width:500px; text-align:center;"></div>`;
+      vic.innerHTML = `<div class="vs-gd-modal" id="wdVersusVictoryContent" style="max-width:520px; text-align:center;"></div>`;
       document.body.appendChild(vic);
     }
+
     if (!document.getElementById('wdVersusHUD')) {
       const hud = document.createElement('div');
       hud.id = 'wdVersusHUD';
@@ -491,15 +864,159 @@
     }
   }
 
-  function updateTopBarAccount() {
-    createDOMElements();
+  // --- HUB AUTH & PROFILE FUNCTIONS ---
+  window.switchHubAuth = function (mode) {
+    versusState.authMode = mode;
+    document.getElementById('hubTabLogin').className = mode === 'login' ? 'gd-sprite-btn' : 'gd-sprite-btn gd-btn-04';
+    document.getElementById('hubTabRegister').className = mode === 'register' ? 'gd-sprite-btn' : 'gd-sprite-btn gd-btn-04';
+    document.getElementById('hubAuthSubmitBtn').textContent = mode === 'login' ? 'LOGIN TO ACCOUNT' : 'CREATE ACCOUNT';
+    document.getElementById('hubAuthError').style.display = 'none';
+  };
+
+  window.submitHubAuth = async function (e) {
+    e.preventDefault();
+    const errEl = document.getElementById('hubAuthError');
+    errEl.style.display = 'none';
+    const username = document.getElementById('hubUsername').value.trim();
+    const password = document.getElementById('hubPassword').value;
+    try {
+      const endpoint = versusState.authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ username, password, lastIcon: getLocalIcon() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Authentication failed');
+      versusState.myUser = data.user;
+      if (window.AccountAPI) window.AccountAPI.currentUser = data.user;
+      if (data.user.lastIcon) {
+        localStorage.setItem('iconCurrentPlayer', data.user.lastIcon.player || 'player_01');
+        localStorage.setItem('iconMainColor', data.user.lastIcon.mainColor || '04FF00');
+        localStorage.setItem('iconSecondaryColor', data.user.lastIcon.secondaryColor || '00FBFF');
+      }
+      socket.emit('versus:auth', {
+        username: data.user.username,
+        browserId: getBrowserId(),
+        lastIcon: getLocalIcon()
+      });
+      refreshMainHubUI();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+    }
+  };
+
+  window.hubLogout = async function () {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    versusState.myUser = null;
+    if (window.AccountAPI) window.AccountAPI.currentUser = null;
+    refreshMainHubUI();
+  };
+
+  function refreshMainHubProfile() {
     const u = versusState.myUser;
-    const nameEl = document.getElementById('wdBarUsername');
-    const ptsEl = document.getElementById('wdBarPoints');
-    if (nameEl && u) nameEl.textContent = u.username;
-    if (ptsEl && u) ptsEl.textContent = `★ ${u.listPoints || 0} List Pts`;
+    if (!u) return;
+    const nameEl = document.getElementById('hubWelcomeName');
+    const rName = document.getElementById('hubMyRankName');
+    const rPts = document.getElementById('hubMyRankedRP');
+    const uPts = document.getElementById('hubMyUnrankedPts');
+    if (nameEl) nameEl.textContent = u.username;
+    if (rName) rName.textContent = u.rankInfo ? u.rankInfo.name : 'Easy I';
+    if (rPts) rPts.textContent = `★ ${u.rankedPoints || 0} Ranked RP`;
+    if (uPts) uPts.textContent = `⚔ ${u.unrankedPoints || 0} Unranked Pts`;
+    renderIcon(document.getElementById('hubMyCubeCanvas'), getLocalIcon());
+    if (u.rankInfo) renderRankBadge(document.getElementById('hubMyRankCanvas'), u.rankInfo);
   }
 
+  function refreshMainHubUI() {
+    createDOMElements();
+    const authCard = document.getElementById('wdHubAuthCard');
+    const menuCard = document.getElementById('wdHubMenuCard');
+    if (!authCard || !menuCard) return;
+    if (versusState.myUser) {
+      authCard.style.display = 'none';
+      menuCard.style.display = 'block';
+      refreshMainHubProfile();
+    } else {
+      authCard.style.display = 'block';
+      menuCard.style.display = 'none';
+    }
+  }
+
+  // --- IN-GAME LEADERBOARD MODAL ---
+  window.openLeaderboardModal = function () {
+    createDOMElements();
+    document.getElementById('wdLeaderboardOverlay').style.display = 'flex';
+    window.fetchLeaderboards();
+  };
+
+  function closeLeaderboardModal() {
+    const el = document.getElementById('wdLeaderboardOverlay');
+    if (el) el.style.display = 'none';
+  }
+  window.closeLeaderboardModal = closeLeaderboardModal;
+
+  window.switchLbTab = function (tab) {
+    versusState.lbTab = tab;
+    document.getElementById('lbTabBtnRanked').className = tab === 'ranked' ? 'gd-sprite-btn' : 'gd-sprite-btn gd-btn-04';
+    document.getElementById('lbTabBtnUnranked').className = tab === 'unranked' ? 'gd-sprite-btn' : 'gd-sprite-btn gd-btn-04';
+    renderLeaderboardModalRows();
+  };
+
+  window.fetchLeaderboards = async function () {
+    try {
+      const res = await fetch('/api/leaderboard');
+      versusState.cachedLb = await res.json();
+      renderLeaderboardModalRows();
+    } catch (e) {}
+  };
+
+  function renderLeaderboardModalRows() {
+    const container = document.getElementById('wdLeaderboardRows');
+    if (!container) return;
+    const isRanked = versusState.lbTab === 'ranked';
+    const rows = isRanked ? versusState.cachedLb.rankedLeaderboard : versusState.cachedLb.unrankedLeaderboard;
+    if (!rows || rows.length === 0) {
+      container.innerHTML = '<div style="text-align:center; padding:20px;">No players ranked yet! Win a 1v1 match to claim #1!</div>';
+      return;
+    }
+    container.innerHTML = '';
+    rows.forEach((entry) => {
+      const pts = isRanked ? entry.rankedPoints : entry.unrankedPoints;
+      const wins = isRanked ? entry.rankedWins : entry.unrankedWins;
+      const losses = isRanked ? entry.rankedLosses : entry.unrankedLosses;
+      const div = document.createElement('div');
+      div.className = 'vs-room-row';
+      div.innerHTML = `
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="font-size:1.2rem; font-weight:900; color:#ffd700; width:34px; text-align:center;">#${entry.rank}</div>
+          <div class="icon-box-frame" style="width:42px; height:42px;"><canvas width="36" height="36" id="m_lb_cube_${entry.rank}"></canvas></div>
+          <div>
+            <div style="font-size:1.05rem; font-weight:900;">${entry.username}</div>
+            <div style="font-size:0.78rem; color:#8ce0ff;">${wins}W - ${losses}L</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          ${isRanked ? `
+            <div style="display:flex; align-items:center; gap:6px; background:rgba(0,0,0,0.45); padding:3px 8px; border-radius:8px; border:2px solid #000;">
+              <canvas width="36" height="36" id="m_lb_rank_${entry.rank}"></canvas>
+              <span style="color:#00ffff; font-weight:900; font-size:0.9rem;">${entry.rankInfo ? entry.rankInfo.name : 'Easy I'}</span>
+            </div>
+          ` : ''}
+          <div style="color:#ffd700; font-weight:900; font-size:1rem;">${isRanked ? `★ ${pts} RP` : `⚔ ${pts} Pts`}</div>
+        </div>
+      `;
+      container.appendChild(div);
+      renderIcon(div.querySelector(`#m_lb_cube_${entry.rank}`), entry.lastIcon);
+      if (isRanked && entry.rankInfo) {
+        renderRankBadge(div.querySelector(`#m_lb_rank_${entry.rank}`), entry.rankInfo);
+      }
+    });
+  }
+
+  // --- VERSUS LOBBY MODAL ---
   window.openVersusLobby = function () {
     createDOMElements();
     socket.emit('versus:list_rooms');
@@ -521,41 +1038,76 @@
     const levels = versusState.levels || [];
 
     if (!room) {
+      const queueBanner = versusState.inQueue
+        ? `
+          <div class="vs-gd-inner" style="text-align:center; border-color:#ffd700;">
+            <div style="font-size:1.2rem; color:#c1fb3d; font-weight:900;">
+              🔍 SEARCHING FOR ${versusState.queueIsRanked ? 'RANKED' : 'UNRANKED'} 1v1 OPPONENT...
+            </div>
+            <div style="font-size:0.85rem; color:#ffd700; margin:6px 0;">
+               Match launches automatically as soon as an opponent matches!
+            </div>
+            <button class="gd-sprite-btn gd-btn-03" onclick="window.VersusSocket.emit('versus:leave_queue')">Cancel Queue</button>
+          </div>
+        `
+        : `
+          <div class="vs-gd-inner">
+            <div style="text-align:center; color:#ffd700; font-weight:900; margin-bottom:8px; font-size:0.92rem;">
+              ⚡ QUICK MATCHMAKING QUEUE (AUTO-MATCH WITH OPPONENT)
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center;">
+              <button class="gd-sprite-btn gd-btn-02" onclick="window.VersusSocket.emit('versus:join_queue', { isRanked: true })">
+                🏆 RANKED 1v1 QUEUE (${versusState.rankedInQueue} Waiting)
+              </button>
+              <button class="gd-sprite-btn" onclick="window.VersusSocket.emit('versus:join_queue', { isRanked: false })">
+                ⚔ UNRANKED 1v1 QUEUE (${versusState.unrankedInQueue} Waiting)
+              </button>
+            </div>
+          </div>
+        `;
+
       const roomsHtml = (versusState.publicRooms || []).length === 0
-        ? `<div style="text-align:center; padding:18px; color:#9be8ff;">No open public rooms right now. Click <b>Create 1v1 Room</b> to host one!</div>`
+        ? `<div style="text-align:center; padding:14px; color:#ddd;">No open lobbies right now. Join a Queue above or Host a Lobby below!</div>`
         : versusState.publicRooms.map(r => `
             <div class="vs-room-row">
               <div>
-                <div style="font-weight:900; font-size:1.05rem;">${r.hostName} <span style="color:#ffd700;">(★ ${r.hostPoints} pts)</span></div>
-                <div style="font-size:0.85rem; color:#9be8ff;">Level: <b>${r.levelName}</b> (${r.difficulty}) · <span style="color:#c1fb3d;">+${r.points} List Points</span></div>
-                <div style="font-size:0.8rem; color:#ffcc00;">Rule: ${r.ruleName || 'Standard Race'}</div>
+                <div style="font-weight:900; font-size:1rem;">
+                  <span style="color:${r.isRanked ? '#00ffff' : '#c1fb3d'};">[${r.isRanked ? '🏆 RANKED' : '⚔ UNRANKED'}]</span>
+                  ${r.hostName} <span style="color:#ffd700;">(${r.hostRank ? r.hostRank.name : 'Easy I'} · ★ ${r.hostPoints})</span>
+                </div>
+                <div style="font-size:0.82rem; color:#9be8ff;">Level: <b>${r.levelName}</b> (${r.difficulty}) · <span style="color:#c1fb3d;">+${r.points} Points</span> · Rule: ${r.ruleName}</div>
               </div>
-              <button class="vs-btn-action vs-green" onclick="window.VersusSocket.emit('versus:join_room', { roomId: '${r.id}' })">JOIN 1v1</button>
+              <button class="gd-sprite-btn" onclick="window.VersusSocket.emit('versus:join_room', { roomId: '${r.id}' })">JOIN</button>
             </div>
           `).join('');
 
       container.innerHTML = `
         <div class="vs-header">
-          <h2>⚔ 1v1 VERSUS & GLOBED LOBBY</h2>
-          <button class="vs-btn-action vs-red" onclick="window.closeVersusLobby()">✕ Close</button>
+          <h2>⚔ 1v1 VERSUS · QUEUE & LOBBIES</h2>
+          <button class="gd-sprite-btn gd-btn-03" onclick="window.closeVersusLobby()">✕ Close</button>
         </div>
 
-        <div style="display:flex; flex-wrap:wrap; gap:12px; margin-bottom:20px; justify-content:space-between; align-items:center;">
-          <div style="display:flex; gap:10px;">
-            <button class="vs-btn-action vs-green" onclick="window.VersusSocket.emit('versus:create_room', { levelId: 'level_1', isPublic: true })">+ Create Public 1v1 Room</button>
-            <button class="vs-btn-action vs-blue" onclick="window.VersusSocket.emit('versus:create_room', { levelId: 'level_1', isPublic: false })">🔒 Create Private Room</button>
+        ${queueBanner}
+
+        <div class="vs-gd-inner" style="display:flex; flex-wrap:wrap; gap:8px; justify-content:space-between; align-items:center;">
+          <div style="display:flex; flex-wrap:wrap; gap:8px;">
+            <button class="gd-sprite-btn gd-btn-02" onclick="window.VersusSocket.emit('versus:create_room', { levelId: 'level_1', isPublic: true, isRanked: true })">🏆 Host Ranked</button>
+            <button class="gd-sprite-btn" onclick="window.VersusSocket.emit('versus:create_room', { levelId: 'level_1', isPublic: true, isRanked: false })">+ Host Unranked</button>
+            <button class="gd-sprite-btn gd-btn-04" onclick="window.VersusSocket.emit('versus:create_room', { levelId: 'level_1', isPublic: false, isRanked: false })">🔒 Private</button>
           </div>
-          <div style="display:flex; gap:8px;">
-            <input id="joinCodeInput" placeholder="Room Code..." maxlength="6" style="padding:10px; border-radius:10px; border:2px solid #5ce1e6; background:#000; color:#fff; font-weight:900; width:130px; text-transform:uppercase;" />
-            <button class="vs-btn-action vs-orange" onclick="window.VersusSocket.emit('versus:join_room', { roomId: document.getElementById('joinCodeInput').value })">Join Code</button>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <input id="joinCodeInput" placeholder="CODE..." maxlength="6" style="padding:7px; border-radius:8px; border:3px solid #000; background:rgba(0,0,0,0.7); color:#fff; font-weight:900; width:95px; text-transform:uppercase; -webkit-user-select:text; user-select:text;" />
+            <button class="gd-sprite-btn gd-btn-02" onclick="window.VersusSocket.emit('versus:join_room', { roomId: document.getElementById('joinCodeInput').value })">Join</button>
           </div>
         </div>
 
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-          <h3 style="color:#ffd700;">OPEN 1v1 ROOMS</h3>
-          <button class="vs-btn-action vs-blue" style="padding:6px 12px; font-size:0.8rem;" onclick="window.VersusSocket.emit('versus:list_rooms')">↻ Refresh</button>
+        <div class="vs-gd-inner">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <h3 style="color:#ffd700; font-size:1rem;">OPEN 1v1 LOBBIES</h3>
+            <button class="gd-sprite-btn gd-btn-04" style="font-size:0.75rem;" onclick="window.VersusSocket.emit('versus:list_rooms')">↻ Refresh</button>
+          </div>
+          <div>${roomsHtml}</div>
         </div>
-        <div>${roomsHtml}</div>
       `;
     } else {
       const isHost = room.hostId === socket.id;
@@ -564,71 +1116,86 @@
 
       const levelOptions = levels.map(l => `
         <option value="${l.id}" ${l.id === room.level.id ? 'selected' : ''}>
-          ${l.name} (${l.difficulty}) — +${l.points} List Points
+          ${l.name} (${l.difficulty}) — +${l.points} Points
         </option>
       `).join('');
 
       const ruleOptions = [
         { id: 'race', label: 'First to 100% (Standard Race)' },
-        { id: 'min_attempts', label: 'Min Attempts (Fewest Attempts at 100% Wins)' },
-        { id: 'max_attempts_4', label: 'Max 4 Attempts (Furthest % in 4 Attempts Wins)' }
+        { id: 'min_attempts', label: 'Min Attempts (Fewest Attempts at 100%)' },
+        { id: 'max_attempts_4', label: 'Max 4 Attempts (Furthest % in 4 Attempts)' }
       ].map(r => `<option value="${r.id}" ${r.id === room.ruleMode ? 'selected' : ''}>${r.label}</option>`).join('');
 
       container.innerHTML = `
         <div class="vs-header">
-          <h2>⚔ 1v1 ROOM CODE: <span style="color:#ffd700;">${room.id}</span></h2>
-          <button class="vs-btn-action vs-red" onclick="window.VersusSocket.emit('versus:leave_room'); window.VersusState.room = null; window.openVersusLobby();">Leave Room</button>
+          <h2>${room.isRanked ? '🏆 RANKED' : '⚔ UNRANKED'} LOBBY: <span style="color:#00ffff;">${room.id}</span></h2>
+          <button class="gd-sprite-btn gd-btn-03" onclick="window.VersusSocket.emit('versus:leave_room'); window.VersusState.room = null; window.openVersusLobby();">Leave</button>
         </div>
 
-        <div style="background:rgba(0,0,0,0.4); border:2px solid #ffd700; border-radius:12px; padding:14px; text-align:center; margin-bottom:14px;">
-          <div style="font-size:0.9rem; color:#9be8ff; font-weight:800;">MAIN LEVEL & HOST RULES (GLOBED GHOST ENABLED)</div>
-          <div style="font-size:1.45rem; font-weight:900; color:#fff; margin:4px 0;">
-            ${room.level.name} <span style="color:#c1fb3d;">(+${room.level.points} List Points)</span>
+        <div class="vs-gd-inner" style="text-align:center;">
+          <div style="font-size:1.25rem; font-weight:900; color:#fff;">
+            ${room.level.name} <span style="color:#c1fb3d;">(+${room.level.points} ${room.isRanked ? 'Ranked RP' : 'Unranked Pts'})</span>
           </div>
-          <div style="font-size:0.95rem; font-weight:900; color:#ffcc00; margin-bottom:6px;">
-            Rule: ${room.ruleName} — <span style="color:#ddd; font-weight:700;">${room.ruleDesc}</span>
+          <div style="font-size:0.85rem; color:#ffd700; margin:4px 0;">
+            Rule: ${room.ruleName} — ${room.ruleDesc}
           </div>
           ${isHost ? `
-            <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:10px;">
-              <select onchange="window.VersusSocket.emit('versus:change_level', { levelId: this.value })" style="padding:8px 12px; border-radius:8px; background:#081c44; color:#fff; border:2px solid #5ce1e6; font-weight:900;">
+            <div style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center; margin-top:6px;">
+              <select onchange="window.VersusSocket.emit('versus:change_level', { levelId: this.value })" style="padding:5px 8px; border-radius:8px; background:#000; color:#fff; border:2px solid #ffd700; font-weight:900; max-width:100%;">
                 ${levelOptions}
               </select>
-              <select onchange="window.VersusSocket.emit('versus:change_rule', { ruleMode: this.value })" style="padding:8px 12px; border-radius:8px; background:#081c44; color:#ffcc00; border:2px solid #ffcc00; font-weight:900;">
+              <select onchange="window.VersusSocket.emit('versus:change_rule', { ruleMode: this.value })" style="padding:5px 8px; border-radius:8px; background:#000; color:#00ffff; border:2px solid #00ffff; font-weight:900; max-width:100%;">
                 ${ruleOptions}
               </select>
+              <select onchange="window.VersusSocket.emit('versus:change_ranked', { isRanked: this.value === 'true' })" style="padding:5px 8px; border-radius:8px; background:#000; color:#c1fb3d; border:2px solid #c1fb3d; font-weight:900; max-width:100%;">
+                <option value="false" ${!room.isRanked ? 'selected' : ''}>⚔ Mode: Unranked (No Cooldown)</option>
+                <option value="true" ${room.isRanked ? 'selected' : ''}>🏆 Mode: Ranked (RP & Rank Faces)</option>
+              </select>
             </div>
-          ` : `<div style="font-size:0.85rem; color:#aaa;">Host is configuring level & rules...</div>`}
+          ` : ''}
         </div>
 
         <div class="vs-players-cards">
           <div class="vs-pcard">
-            <canvas id="vsRoomP1Icon" width="60" height="60"></canvas>
-            <div style="font-size:1.25rem; font-weight:900;">${p1 ? p1.username : 'Waiting...'}</div>
-            <div style="color:#ffd700; font-weight:900;">★ ${p1 ? p1.listPoints : 0} List Points</div>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <canvas id="vsRoomP1Icon" width="48" height="48"></canvas>
+              <canvas id="vsRoomP1Rank" width="48" height="48"></canvas>
+            </div>
+            <div style="font-size:1.1rem; font-weight:900;">${p1 ? p1.username : 'Waiting...'}</div>
+            <div style="color:#00ffff; font-weight:900; font-size:0.88rem;">${p1 && p1.rankInfo ? p1.rankInfo.name : 'Easy I'} (★ ${p1 ? p1.rankedPoints : 0} RP)</div>
           </div>
 
-          <div style="font-size:2.2rem; font-weight:900; color:#ff9900; text-shadow:0 3px 0 #000;">VS</div>
+          <div style="font-size:1.6rem; font-weight:900; color:#ffd700; text-align:center;">VS</div>
 
           <div class="vs-pcard">
-            <canvas id="vsRoomP2Icon" width="60" height="60"></canvas>
-            <div style="font-size:1.25rem; font-weight:900;">${p2 ? p2.username : 'Waiting for Opponent...'}</div>
-            <div style="color:#ffd700; font-weight:900;">${p2 ? `★ ${p2.listPoints} List Points` : 'Share Room Code: ' + room.id}</div>
+            <div style="display:flex; gap:10px; align-items:center;">
+              <canvas id="vsRoomP2Icon" width="48" height="48"></canvas>
+              <canvas id="vsRoomP2Rank" width="48" height="48"></canvas>
+            </div>
+            <div style="font-size:1.1rem; font-weight:900;">${p2 ? p2.username : 'Waiting for Opponent...'}</div>
+            <div style="color:#00ffff; font-weight:900; font-size:0.88rem;">${p2 ? `${p2.rankInfo ? p2.rankInfo.name : 'Easy I'} (★ ${p2.rankedPoints} RP)` : 'Code: ' + room.id}</div>
           </div>
         </div>
 
-        <div style="text-align:center; margin-top:16px;">
+        <div style="text-align:center; margin-top:10px;">
           ${isHost ? `
-            <button class="vs-btn-action vs-green" style="font-size:1.25rem; padding:14px 36px; ${!p2 ? 'opacity:0.5;' : ''}" onclick="window.VersusSocket.emit('versus:start_match')">
-              ${p2 ? '▶ START 1v1 VERSUS MATCH!' : 'Waiting for Player 2...'}
+            <button class="gd-sprite-btn" style="font-size:1.1rem; padding:6px 22px; ${!p2 ? 'opacity:0.5;' : ''}" onclick="window.VersusSocket.emit('versus:start_match')">
+              ${p2 ? '▶ START 1v1 MATCH!' : 'Waiting for Player 2...'}
             </button>
           ` : `
-            <div style="font-size:1.1rem; font-weight:900; color:#c1fb3d;">Ready! Waiting for Host to start the match...</div>
+            <div style="font-size:1rem; font-weight:900; color:#c1fb3d;">Ready! Waiting for Host to start...</div>
           `}
         </div>
       `;
 
-      if (p1) renderIcon(document.getElementById('vsRoomP1Icon'), p1.lastIcon);
-      if (p2) renderIcon(document.getElementById('vsRoomP2Icon'), p2.lastIcon);
+      if (p1) {
+        renderIcon(document.getElementById('vsRoomP1Icon'), p1.lastIcon);
+        renderRankBadge(document.getElementById('vsRoomP1Rank'), p1.rankInfo);
+      }
+      if (p2) {
+        renderIcon(document.getElementById('vsRoomP2Icon'), p2.lastIcon);
+        renderRankBadge(document.getElementById('vsRoomP2Rank'), p2.rankInfo);
+      }
     }
   }
 
@@ -642,7 +1209,7 @@
     hud.style.display = 'block';
     const ruleTag = document.getElementById('hudRuleTag');
     if (ruleTag) {
-      ruleTag.textContent = `⚔ ${versusState.room.ruleName} · GLOBED GHOST ACTIVE`;
+      ruleTag.textContent = `${versusState.room.isRanked ? '🏆 RANKED' : '⚔ UNRANKED'} · ${versusState.room.ruleName} · GLOBED GHOST`;
     }
     const players = versusState.room.players || [];
     const me = players.find(p => p.socketId === socket.id) || players[0];
@@ -671,27 +1238,32 @@
     if (!ov || !content || !room.winner) return;
 
     const iWon = room.winner.socketId === socket.id;
+    const ptsLabel = room.winner.isRanked ? 'RANKED RP' : 'UNRANKED POINTS';
     content.innerHTML = `
-      <h2 style="font-size:2.2rem; color:${iWon ? '#88ff2b' : '#ff5e5e'}; text-shadow:0 3px 0 #000; margin-bottom:8px;">
+      <h2 style="font-size:2rem; color:${iWon ? '#88ff2b' : '#ff5e5e'}; margin-bottom:6px;">
         ${iWon ? '🏆 VICTORY!' : '💀 DEFEAT!'}
       </h2>
-      <div style="font-size:1.15rem; font-weight:900; margin-bottom:12px;">
-        ${room.winner.reasonText || `${room.winner.username} won on ${room.winner.levelName}!`}
+      <div style="font-size:1rem; font-weight:900; margin-bottom:10px;">
+        ${room.winner.reasonText}
       </div>
-      <div style="background:rgba(0,0,0,0.5); border:2px solid #ffd700; border-radius:12px; padding:14px; margin:16px 0;">
-        <div style="color:#ffd700; font-size:1.4rem; font-weight:900;">
-          ${iWon ? `+${room.winner.pointsAwarded} LIST POINTS!` : '+0 List Points'}
+      <div class="vs-gd-inner" style="display:flex; flex-direction:column; align-items:center; gap:6px;">
+        <canvas id="vicRankBadge" width="60" height="60"></canvas>
+        <div style="color:#ffd700; font-size:1.3rem; font-weight:900;">
+          ${iWon ? `+${room.winner.pointsAwarded} ${ptsLabel}!` : `+0 ${ptsLabel}`}
         </div>
-        <div style="font-size:0.9rem; color:#9be8ff; margin-top:4px;">
-          Winner Total: ★ ${room.winner.newTotalPoints} List Points
+        <div style="font-size:0.92rem; color:#00ffff; font-weight:900;">
+          Winner Rank: ${room.winner.rankInfo ? room.winner.rankInfo.name : 'Easy I'} (Total: ★ ${room.winner.newTotalPoints})
         </div>
       </div>
-      <div style="display:flex; gap:12px; justify-content:center; margin-top:16px;">
-        <button class="vs-btn-action vs-green" onclick="window.backToVersusRoom()">Return to 1v1 Room</button>
-        <button class="vs-btn-action vs-blue" onclick="window.hideVictoryModal()">Keep Practicing</button>
+      <div style="display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:12px;">
+        <button class="gd-sprite-btn" onclick="window.backToVersusRoom()">Return to 1v1 Lobby</button>
+        <button class="gd-sprite-btn gd-btn-04" onclick="window.returnToCustomClient()">Return to Main Client</button>
       </div>
     `;
     ov.style.display = 'flex';
+    if (room.winner.rankInfo) {
+      renderRankBadge(document.getElementById('vicRankBadge'), room.winner.rankInfo);
+    }
   }
 
   function hideVictoryModal() {
@@ -700,79 +1272,110 @@
   }
   window.hideVictoryModal = hideVictoryModal;
 
-  window.backToVersusRoom = function () {
+  window.returnToCustomClient = function () {
     hideVictoryModal();
+    const scene = window._gameScene;
+    if (scene && !scene._menuActive) {
+      scene._menuActive = true;
+      scene.scene.restart();
+    }
+  };
+
+  window.backToVersusRoom = function () {
+    window.returnToCustomClient();
     window.openVersusLobby();
   };
 
-  // --- HOOK PHASER GAMESCENE + GLOBED REAL-TIME GHOST ---
+  function hideStockPhaserMenuSprites(scene) {
+    const hideList = [
+      scene._logo, scene._robLogo, scene._playBtn, scene._iconBtn, scene._creatorBtn,
+      scene._menuGlitter, scene._menuSettingsBtn, scene._menuStatsBtn,
+      scene._menuAchievementsBtn, scene._menuNewgroundsBtn, scene._menuInfoBtn,
+      scene._tryMeImg, scene._copyrightText, scene._chrSelDecor, scene._lvlEditDecor,
+      scene._menuFsBtn
+    ];
+    hideList.forEach(s => { if (s && s.setVisible) s.setVisible(false); });
+    if (scene._socialIcons) scene._socialIcons.forEach(ic => ic && ic.setVisible(false));
+    if (scene._downloadBtns) scene._downloadBtns.forEach(b => b && b.setVisible(false));
+  }
+
   function installGameSceneHooks() {
     if (typeof GameScene === 'undefined') {
       setTimeout(installGameSceneHooks, 100);
       return;
     }
 
+    GameScene.prototype._buildNewsPopup = function () {};
+    GameScene.prototype._buildUpdateLogPopup = function () {};
+
+    const origMakeBouncy = GameScene.prototype._makeBouncyButton;
+    GameScene.prototype._makeBouncyButton = function (target, baseScale, onClick, canActivate) {
+      if (target && target === this._iconBtn && typeof onClick === 'function') {
+        this._triggerGarageOpen = onClick;
+      }
+      return origMakeBouncy.apply(this, arguments);
+    };
+
     const origCreate = GameScene.prototype.create;
     GameScene.prototype.create = function () {
       window._gameScene = this;
       origCreate.apply(this, arguments);
+      versusState.engineReady = true;
 
-      if (this._socialIcons) this._socialIcons.forEach(ic => ic && ic.setVisible(false));
-      if (this._tryMeImg) this._tryMeImg.setVisible(false);
-      if (this._downloadBtns) this._downloadBtns.forEach(b => b && b.setVisible(false));
-      if (this._menuAchievementsBtn) this._menuAchievementsBtn.setVisible(false);
-      if (this._menuNewgroundsBtn) this._menuNewgroundsBtn.setVisible(false);
+      if (this._closeNewsPopup) { try { this._closeNewsPopup(); } catch (e) {} }
+      if (this._closeUpdateLogPopup) { try { this._closeUpdateLogPopup(); } catch (e) {} }
 
+      hideStockPhaserMenuSprites(this);
       this._openCreatorMenu = () => window.openVersusLobby();
 
-      if (this._menuActive && this._playBtn && this._creatorBtn) {
-        this._practiceModeTag = this.add.bitmapText(this._playBtn.x, this._playBtn.y - 115, 'goldFont', 'SOLO PRACTICE', 24)
-          .setOrigin(0.5).setScrollFactor(0).setDepth(35);
-        this._versusModeTag = this.add.bitmapText(this._creatorBtn.x, this._creatorBtn.y - 95, 'goldFont', '1v1 VERSUS', 24)
-          .setOrigin(0.5).setScrollFactor(0).setDepth(35);
-        if (this._iconBtn) {
-          this._iconKitTag = this.add.bitmapText(this._iconBtn.x, this._iconBtn.y - 95, 'bigFont', 'ICON KIT', 20)
-            .setOrigin(0.5).setScrollFactor(0).setDepth(35);
-        }
-      }
-
-      // Create Globed Ghost Graphics & Label inside Phaser Scene
       this._globedGhostGfx = this.add.graphics().setScrollFactor(0).setDepth(48).setVisible(false);
       this._globedGhostLabel = this.add.bitmapText(0, 0, 'bigFont', '', 16)
         .setOrigin(0.5, 1).setScrollFactor(0).setDepth(49).setAlpha(0.85).setVisible(false);
 
       createDOMElements();
+      refreshMainHubUI();
       updateInGameHUD();
-    };
-
-    const origStartGame = GameScene.prototype._startGame;
-    GameScene.prototype._startGame = function () {
-      if (this._practiceModeTag) { this._practiceModeTag.destroy(); this._practiceModeTag = null; }
-      if (this._versusModeTag) { this._versusModeTag.destroy(); this._versusModeTag = null; }
-      if (this._iconKitTag) { this._iconKitTag.destroy(); this._iconKitTag = null; }
-      origStartGame.apply(this, arguments);
     };
 
     const origPositionMenu = GameScene.prototype._positionMenuItems;
     GameScene.prototype._positionMenuItems = function () {
       origPositionMenu.apply(this, arguments);
-      if (this._socialIcons) this._socialIcons.forEach(ic => ic && ic.setVisible(false));
-      if (this._tryMeImg) this._tryMeImg.setVisible(false);
-      if (this._downloadBtns) this._downloadBtns.forEach(b => b && b.setVisible(false));
-      if (this._practiceModeTag && this._playBtn) this._practiceModeTag.setPosition(this._playBtn.x, this._playBtn.y - 115);
-      if (this._versusModeTag && this._creatorBtn) this._versusModeTag.setPosition(this._creatorBtn.x, this._creatorBtn.y - 95);
-      if (this._iconKitTag && this._iconBtn) this._iconKitTag.setPosition(this._iconBtn.x, this._iconBtn.y - 95);
+      hideStockPhaserMenuSprites(this);
     };
 
     const origUpdate = GameScene.prototype.update;
     GameScene.prototype.update = function (time, delta) {
       origUpdate.apply(this, arguments);
 
-      const topBar = document.getElementById('wdTopAccountBar');
-      if (topBar) topBar.style.display = this._menuActive ? 'flex' : 'none';
+      hideStockPhaserMenuSprites(this);
+
+      const subOverlayOpen = !!(
+        this._iconOverlay ||
+        this._levelSelectOverlay ||
+        this._settingsLayerOverlay ||
+        this._settingsPopup
+      );
+      const shouldShowHub = this._menuActive && !subOverlayOpen;
+
+      const hub = document.getElementById('wdMainHubOverlay');
+      if (hub) {
+        if (hub.style.display !== (shouldShowHub ? 'flex' : 'none')) {
+          hub.style.display = shouldShowHub ? 'flex' : 'none';
+          if (shouldShowHub) refreshMainHubProfile();
+        }
+      }
+
+      if (this.game && this.game.canvas) {
+        this.game.canvas.style.visibility = shouldShowHub ? 'hidden' : 'visible';
+      }
 
       if (versusState.activeMatch && !this._menuActive && this._level && this._level.endXPos > 0) {
         if (window.noClip) window.noClip = false;
+
+        const upDown = !!(this._state && this._state.upKeyDown);
+        const justJumped = upDown && !versusState.prevUpKeyDown;
+        versusState.prevUpKeyDown = upDown;
+        if (justJumped) versusState.jumpsCount++;
 
         let rawPct = (this._playerWorldX / this._level.endXPos) * 100;
         rawPct = Math.min(100, Math.max(0, rawPct));
@@ -789,11 +1392,11 @@
           socket.emit('versus:progress', {
             percent: rounded,
             attempts: attempts,
-            died: isDead
+            died: isDead,
+            jumps: versusState.jumpsCount
           });
         }
 
-        // 1. EMIT MY GLOBED GHOST POSITION (30Hz)
         const now = performance.now();
         if (now - versusState.lastGhostEmit >= 33 && this._state) {
           versusState.lastGhostEmit = now;
@@ -802,11 +1405,11 @@
             x: Math.round(this._playerWorldX),
             y: Math.round(this._state.y || 30),
             angle: spr ? Math.round(spr.angle || 0) : 0,
-            dead: isDead
+            dead: isDead,
+            jumped: justJumped
           });
         }
 
-        // 2. RENDER OPPONENT'S GLOBED GHOST IN REAL TIME
         const g = versusState.opponentGhost;
         if (g && this._globedGhostGfx && this._globedGhostLabel && !g.dead) {
           g.x += (g.targetX - g.x) * 0.35;
@@ -822,7 +1425,6 @@
             this._globedGhostGfx.clear();
             this._globedGhostGfx.setVisible(true);
 
-            // Draw rotated translucent GD Ghost Cube at opponent's exact coordinates
             const rad = (g.angle || 0) * (Math.PI / 180);
             const cos = Math.cos(rad), sin = Math.sin(rad);
             const rotPt = (lx, ly) => ({
@@ -830,7 +1432,6 @@
               y: screenY + (lx * sin + ly * cos)
             });
 
-            // Outer primary cube (size 54x54)
             const h1 = 26;
             const pA = rotPt(-h1, -h1), pB = rotPt(h1, -h1), pC = rotPt(h1, h1), pD = rotPt(-h1, h1);
             this._globedGhostGfx.fillStyle(c1, 0.48);
@@ -844,7 +1445,6 @@
             this._globedGhostGfx.fillPath();
             this._globedGhostGfx.strokePath();
 
-            // Inner secondary core (size 26x26)
             const h2 = 13;
             const qA = rotPt(-h2, -h2), qB = rotPt(h2, -h2), qC = rotPt(h2, h2), qD = rotPt(-h2, h2);
             this._globedGhostGfx.fillStyle(c2, 0.6);
