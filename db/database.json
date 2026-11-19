@@ -1,0 +1,28 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "username": "YNTM",
+      "email": "",
+      "passwordHash": "$2b$10$nd.gCiQaL7qXXHykMlCbZ.tJfiQJnO8aIWOT2QeKDf7aF/MWR52di",
+      "listPoints": 0,
+      "wins": 0,
+      "losses": 0,
+      "lastIcon": {
+        "player": "player_21",
+        "mainColor": "ff0000",
+        "secondaryColor": "ff7d00"
+      },
+      "saveData": {
+        "iconCurrentPlayer": "player_21",
+        "iconMainColor": "FF0000",
+        "iconSecondaryColor": "FF7D00"
+      },
+      "createdAt": "2026-11-19T11:50:12.370Z"
+    }
+  ],
+  "sessions": {
+    "81fd6d24-8bce-4d81-ac55-52701194af6e": 1
+  },
+  "matchHistory": []
+}

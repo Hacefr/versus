@@ -1,130 +1,680 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Web Dashers</title>
-    <link rel="icon" type="image/x-icon" href="assets/favicon.ico">
-    <link rel="stylesheet" href="assets/style.css">
-    <meta name="description" content="Web Dashers is a fan-made browser mod of the Geometry Dash Web Demo. It features the main levels, a built-in level creator, and a level search to play online levels. The project is actively in development, with more features and updates planned.">
-    <meta name="theme-color" content="#C1FB3D">
-
-    <!-- - Embeds - -->
-    <!-- Open Graph -->
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://web-dashers.github.io/" />
-    <meta property="og:title" content="Web Dashers" />
-    <meta property="og:description" content="Web Dashers is a fan-made browser mod of the Geometry Dash Web Demo. It features the main levels, a built-in level creator, and a level search to play online levels. The project is actively in development, with more features and updates planned." />
-    <meta property="og:image" content="https://web-dashers.github.io/wd_assets/thumbnail_1024.png" />
-
-    <!-- Twitter -->
-    <meta property="twitter:card" content="summary_large_image" />
-    <meta property="twitter:url" content="https://web-dashers.github.io/" />
-    <meta property="twitter:title" content="Web Dashers" />
-    <meta property="twitter:description" content="Web Dashers is a fan-made browser mod of the Geometry Dash Web Demo. It features the main levels, a built-in level creator, and an evel search to play online levels. The project is actively in development, with more features and updates planned." />
-    <meta property="twitter:image" content="https://web-dashers.github.io/wd_assets/thumbnail_1024.png" />
-
-    <!-- Libraries and stuff -->
-    <script src="assets/scripts/game/allObjects.js?v=13"></script>
-    <script src="assets/scripts/game/allLevels.js"></script>
-    <script src="assets/scripts/libs/phaser.min.js"></script>
-    <script src="assets/scripts/libs/pako.min.js"></script>
-    <script src="assets/scripts/utils/cache-manager.js"></script>
-    <script src="assets/scripts/api/GDapiWrapper.js"></script>
-    <script src="assets/scripts/utils/api-config.js"></script>
-    <script src="assets/scripts/api/account-api.js"></script>
-    <!-- workerssdsss nwo-->
-    <script>
-        (function () {
-            var GD_PROXY_HOSTS = [
-                "https://gd-proxy.webdashers.workers.dev",
-                "https://cold-grass-d871.gn-math-business.workers.dev",
-                "https://webd.ktrio839.workers.dev",
-                "https://webdashers.webdashersdevelopement.workers.dev",
-                "https://fallbackgdproxy.webdashers.workers.dev",
-                "https://fallback2.webdashers.workers.dev"
-            ];
-            window._gdProxyUrl = GD_PROXY_HOSTS[0];
-            window._gdProxyHosts = GD_PROXY_HOSTS;
-            var activeIndex = 0;
-            var nativeFetch = window.fetch.bind(window);
-            function matchingHost(url) {
-                for (var i = 0; i < GD_PROXY_HOSTS.length; i++) {
-                    var h = GD_PROXY_HOSTS[i].replace(/\/$/, "");
-                    if (url.indexOf(h) === 0) return GD_PROXY_HOSTS[i];
-                }
-                return null;
-            }
-            function withHost(url, oldHost, newHost) {
-                var cleanOld = oldHost.replace(/\/$/, "");
-                var cleanNew = newHost.replace(/\/$/, "");
-                var path = url.slice(cleanOld.length);
-                if (path.indexOf('/') !== 0) path = '/' + path;
-                return cleanNew + path;
-            }
-            window.fetch = function (input, init) {
-                var isRequestObj = (typeof Request !== "undefined") && (input instanceof Request);
-                var url = isRequestObj ? input.url : input;
-                if (typeof url !== "string") {
-                    return nativeFetch(input, init);
-                }
-            var oldHost = matchingHost(url);
-                if (!oldHost) {
-                    return nativeFetch(input, init);
-                }
-                var attempts = 0;
-                var lastError = null;
-                function tryHost(hostIndex) {
-                    var host = GD_PROXY_HOSTS[hostIndex];
-                    var attemptUrl = withHost(url, oldHost, host);
-                    var attemptInput = isRequestObj ? new Request(attemptUrl, input) : attemptUrl;
-
-                    return nativeFetch(attemptInput, init).then(function (res) {
-                        if ((res.status === 429 || res.status === 503) && attempts < GD_PROXY_HOSTS.length - 1) {
-                            attempts++;
-                            var nextIndex = (hostIndex + 1) % GD_PROXY_HOSTS.length;
-                            return tryHost(nextIndex);
-                        }
-                        activeIndex = hostIndex;
-                        window._gdProxyUrl = host;
-                        return res;
-                    }, function (err) {
-                        lastError = err;
-                        if (attempts < GD_PROXY_HOSTS.length - 1) {
-                            attempts++;
-                            var nextIndex = (hostIndex + 1) % GD_PROXY_HOSTS.length;
-                            return tryHost(nextIndex);
-                        }
-                        throw lastError;
-                    });
-                }
-                return tryHost(activeIndex);
-            };
-        })();
-    </script>
-    <script defer src="assets/scripts/utils/config.js?v=6"></script>
-    <script defer src="assets/scripts/core/animations.js?v=2"></script>
-    <script defer src="assets/scripts/core/triggers.js?v=3"></script>
-    <script defer src="assets/scripts/core/level.js?v=65"></script>
-    <script defer src="assets/scripts/core/player.js?v=50"></script>
-    <script defer src="assets/scripts/core/audio.js?v=2"></script>
-    <script defer src="assets/scripts/core/loading-screen.js?v=7"></script>
-    <script defer src="assets/scripts/core/level-editor.js?v=6"></script>
-    <script defer src="assets/scripts/core/game-scene.js?latest48"></script>
-    <script defer src="assets/scripts/core/main.js?v=4"></script>
-    <script>
-        new ResizeObserver(() => {
-            window.dispatchEvent(new Event('resize'));
-        }).observe(document.documentElement);
-
-        document.oncontextmenu = (event) => {
-            event.preventDefault();
-        };
-    </script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Web Dashers Versus - Portal & Leaderboards</title>
+  <link rel="icon" type="image/x-icon" href="assets/favicon.ico" />
+  <style>
+    @font-face {
+      font-family: 'Pusab';
+      src: local('Pusab'), local('Impact'), local('Arial Black');
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      font-family: 'Trebuchet MS', 'Arial Black', sans-serif;
+      background: #081c44 url('assets/sprites/game_bg_01_001.png') repeat-x center bottom;
+      background-size: cover;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 30px 16px;
+      overflow-x: hidden;
+    }
+    .bg-overlay {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(circle at 50% 25%, rgba(0, 150, 255, 0.25), rgba(2, 8, 24, 0.88));
+      z-index: 0;
+    }
+    .portal-container {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 900px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 22px;
+    }
+    .title-banner {
+      text-align: center;
+      text-shadow: 0 4px 0 #000, 0 0 18px rgba(193, 251, 61, 0.6);
+    }
+    .title-banner h1 {
+      font-size: clamp(2.2rem, 5vw, 3.6rem);
+      font-weight: 900;
+      letter-spacing: 2px;
+      color: #c1fb3d;
+      -webkit-text-stroke: 2px #000;
+    }
+    .title-banner .subtitle {
+      display: inline-block;
+      margin-top: 6px;
+      background: linear-gradient(90deg, #ff9900, #ff2a00);
+      padding: 4px 16px;
+      border-radius: 999px;
+      font-weight: 900;
+      font-size: 0.95rem;
+      letter-spacing: 1.5px;
+      border: 2px solid #fff;
+      box-shadow: 0 3px 0 #000;
+      text-transform: uppercase;
+    }
+    .gd-box {
+      width: 100%;
+      background: linear-gradient(180deg, rgba(15, 42, 88, 0.95), rgba(8, 22, 48, 0.98));
+      border: 4px solid #5ce1e6;
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.7), inset 0 0 20px rgba(92, 225, 230, 0.15);
+    }
+    .auth-tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .auth-tab {
+      flex: 1;
+      padding: 12px;
+      font-size: 1.05rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      background: rgba(255,255,255,0.08);
+      color: #aaa;
+      border: 2px solid rgba(255,255,255,0.2);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+    .auth-tab.active {
+      background: linear-gradient(180deg, #7be626, #3fa605);
+      color: #fff;
+      border-color: #fff;
+      text-shadow: 0 2px 0 #000;
+      box-shadow: 0 4px 0 #1b4d00;
+    }
+    .form-group {
+      margin-bottom: 14px;
+    }
+    .form-group label {
+      display: block;
+      font-weight: 800;
+      margin-bottom: 6px;
+      color: #9be8ff;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 2px solid #2b6cb0;
+      background: rgba(0, 0, 0, 0.45);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 700;
+      outline: none;
+    }
+    .form-group input:focus {
+      border-color: #c1fb3d;
+    }
+    .gd-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 14px 26px;
+      font-size: 1.15rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      color: #fff;
+      text-shadow: 0 2px 0 #000;
+      border: 3px solid #fff;
+      border-radius: 14px;
+      cursor: pointer;
+      transition: transform 0.1s, filter 0.15s;
+      text-decoration: none;
+      user-select: none;
+    }
+    .gd-btn:hover {
+      transform: scale(1.03);
+      filter: brightness(1.1);
+    }
+    .gd-btn:active {
+      transform: scale(0.97);
+    }
+    .btn-green {
+      background: linear-gradient(180deg, #88ff2b, #36a300);
+      box-shadow: 0 5px 0 #194f00, 0 8px 16px rgba(0,0,0,0.5);
+    }
+    .btn-blue {
+      background: linear-gradient(180deg, #38d6ff, #0066cc);
+      box-shadow: 0 5px 0 #00356b, 0 8px 16px rgba(0,0,0,0.5);
+    }
+    .btn-orange {
+      background: linear-gradient(180deg, #ffcc00, #e65c00);
+      box-shadow: 0 5px 0 #7a2900, 0 8px 16px rgba(0,0,0,0.5);
+    }
+    .btn-red {
+      background: linear-gradient(180deg, #ff5e5e, #b30000);
+      box-shadow: 0 4px 0 #590000;
+      padding: 8px 16px;
+      font-size: 0.9rem;
+    }
+    .profile-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 2px solid rgba(92, 225, 230, 0.5);
+      border-radius: 14px;
+      padding: 16px 20px;
+      margin-bottom: 22px;
+    }
+    .profile-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .icon-canvas-wrap {
+      width: 64px;
+      height: 64px;
+      background: rgba(255,255,255,0.07);
+      border: 2px solid #fff;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: inset 0 0 10px rgba(0,0,0,0.6);
+    }
+    .player-meta h2 {
+      font-size: 1.5rem;
+      color: #fff;
+      text-shadow: 0 2px 0 #000;
+    }
+    .stats-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 6px;
+    }
+    .badge {
+      background: rgba(0,0,0,0.6);
+      border: 2px solid #ffd700;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-weight: 900;
+      font-size: 0.9rem;
+      color: #ffd700;
+    }
+    .badge.wins {
+      border-color: #7be626;
+      color: #7be626;
+    }
+    .main-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin-top: 8px;
+    }
+    .error-msg {
+      color: #ff6b6b;
+      background: rgba(255, 0, 0, 0.15);
+      border: 1px solid #ff6b6b;
+      padding: 10px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      font-weight: 700;
+      display: none;
+    }
+    /* Leaderboard Table */
+    .lb-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .lb-header h2 {
+      font-size: 1.6rem;
+      color: #ffd700;
+      text-shadow: 0 3px 0 #000;
+    }
+    .lb-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 480px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .lb-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(0, 0, 0, 0.45);
+      border: 2px solid rgba(255,255,255,0.15);
+      border-radius: 12px;
+      padding: 10px 16px;
+      transition: 0.15s;
+    }
+    .lb-row:nth-child(1) { border-color: #ffd700; background: linear-gradient(90deg, rgba(255,215,0,0.2), rgba(0,0,0,0.5)); }
+    .lb-row:nth-child(2) { border-color: #c0c0c0; background: linear-gradient(90deg, rgba(192,192,192,0.18), rgba(0,0,0,0.5)); }
+    .lb-row:nth-child(3) { border-color: #cd7f32; background: linear-gradient(90deg, rgba(205,127,50,0.18), rgba(0,0,0,0.5)); }
+    .lb-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .lb-rank {
+      font-size: 1.3rem;
+      font-weight: 900;
+      width: 38px;
+      text-align: center;
+      color: #9be8ff;
+      text-shadow: 0 2px 0 #000;
+    }
+    .lb-row:nth-child(1) .lb-rank { color: #ffd700; }
+    .lb-row:nth-child(2) .lb-rank { color: #e0e0e0; }
+    .lb-row:nth-child(3) .lb-rank { color: #ff9d47; }
+    .lb-name {
+      font-size: 1.15rem;
+      font-weight: 900;
+      text-shadow: 0 2px 0 #000;
+    }
+    .lb-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .lb-points {
+      background: rgba(255, 215, 0, 0.15);
+      border: 2px solid #ffd700;
+      color: #ffd700;
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-weight: 900;
+      font-size: 1rem;
+      text-shadow: 0 1px 0 #000;
+    }
+    .levels-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .level-pill {
+      background: rgba(0,0,0,0.4);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.9rem;
+      font-weight: 800;
+    }
+    .level-pts {
+      color: #c1fb3d;
+      font-weight: 900;
+    }
+  </style>
 </head>
-
 <body>
-</body>
+  <div class="bg-overlay"></div>
 
+  <div class="portal-container">
+    <div class="title-banner">
+      <h1>WEB DASHERS</h1>
+      <div class="subtitle">1v1 Versus Edition · List Points Client</div>
+    </div>
+
+    <!-- AUTH BOX (Shown when not logged in) -->
+    <div id="authSection" class="gd-box" style="max-width: 480px; display: none;">
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tabLogin" onclick="switchAuthTab('login')">Login</button>
+        <button class="auth-tab" id="tabRegister" onclick="switchAuthTab('register')">Create Account</button>
+      </div>
+      <div id="authError" class="error-msg"></div>
+      <form id="authForm" onsubmit="handleAuthSubmit(event)">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="authUsername" required placeholder="Enter your dasher name..." maxlength="20" />
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="authPassword" required placeholder="••••••••" />
+        </div>
+        <button type="submit" class="gd-btn btn-green" style="width: 100%;" id="authSubmitBtn">
+          Login to Account
+        </button>
+      </form>
+    </div>
+
+    <!-- DASHBOARD BOX (Shown when logged in) -->
+    <div id="dashboardSection" class="gd-box" style="display: none;">
+      <div class="profile-bar">
+        <div class="profile-left">
+          <div class="icon-canvas-wrap">
+            <canvas id="myIconCanvas" width="52" height="52"></canvas>
+          </div>
+          <div class="player-meta">
+            <h2 id="welcomeUsername">Player</h2>
+            <div class="stats-badges">
+              <span class="badge" id="myListPoints">★ 0 List Points</span>
+              <span class="badge wins" id="myWinLoss">0W - 0L</span>
+            </div>
+          </div>
+        </div>
+        <button class="gd-btn btn-red" onclick="handleLogout()">Logout</button>
+      </div>
+
+      <div class="main-actions">
+        <a href="/play" class="gd-btn btn-green" style="font-size: 1.3rem; padding: 20px;">
+          ▶ LAUNCH GAME (1v1 & PRACTICE)
+        </a>
+        <button class="gd-btn btn-orange" style="font-size: 1.15rem; padding: 20px;" onclick="toggleLeaderboardSection()">
+          🏆 VIEW IN-GAME LEADERBOARDS
+        </button>
+      </div>
+    </div>
+
+    <!-- LEADERBOARD & LIST POINTS VALUES -->
+    <div id="leaderboardSection" class="gd-box">
+      <div class="lb-header">
+        <h2>🏆 TOP LIST POINTS LEADERBOARD</h2>
+        <button class="gd-btn btn-blue" style="padding: 8px 16px; font-size: 0.9rem;" onclick="loadLeaderboard()">↻ Refresh</button>
+      </div>
+      <div id="leaderboardList" class="lb-list">
+        <div style="text-align:center; padding: 20px; color: #aaa;">Loading top players and their icons...</div>
+      </div>
+
+      <details style="margin-top: 20px; cursor: pointer;">
+        <summary style="font-weight: 900; color: #9be8ff; font-size: 1rem;">📋 View Main Levels List Points Table (Grind in 1v1 Versus)</summary>
+        <div id="levelsPointGrid" class="levels-grid"></div>
+      </details>
+    </div>
+  </div>
+
+  <script>
+    let authMode = 'login';
+    let currentUser = null;
+
+    // --- GD ICON PLIST + PNG CANVAS RENDERER ---
+    const iconCache = {};
+
+    function hexToRgb(hex) {
+      const clean = String(hex || '04FF00').replace(/^#/, '').padStart(6, '0');
+      const num = parseInt(clean, 16);
+      return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
+    }
+
+    function parsePlistNode(el) {
+      switch (el.tagName) {
+        case 'dict': {
+          const o = {};
+          const kids = Array.from(el.children);
+          for (let i = 0; i + 1 < kids.length; i += 2) o[kids[i].textContent] = parsePlistNode(kids[i + 1]);
+          return o;
+        }
+        case 'array': return Array.from(el.children).map(parsePlistNode);
+        case 'integer': return parseInt(el.textContent, 10);
+        case 'real': return parseFloat(el.textContent);
+        case 'true': return true;
+        case 'false': return false;
+        default: return el.textContent;
+      }
+    }
+
+    function plistNums(s) {
+      return (String(s).match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+    }
+
+    async function loadIconAtlasData(playerBase) {
+      const base = /^player_\d{2,3}$/.test(playerBase) ? playerBase : 'player_01';
+      if (iconCache[base]) return iconCache[base];
+
+      const [xmlText, img] = await Promise.all([
+        fetch(`assets/icons/${base}-hd.plist`).then(r => r.text()),
+        new Promise((resolve, reject) => {
+          const i = new Image();
+          i.onload = () => resolve(i);
+          i.onerror = reject;
+          i.src = `assets/icons/${base}-hd.png`;
+        })
+      ]);
+
+      const xml = new DOMParser().parseFromString(xmlText, 'text/xml');
+      const plist = parsePlistNode(xml.documentElement.firstElementChild);
+      const frames = {};
+      for (const name of Object.keys(plist.frames || {})) {
+        const d = plist.frames[name];
+        const [x, y] = plistNums(d.textureRect || d.frame);
+        const [w, h] = plistNums(d.spriteSize || (d.frame ? plistNums(d.frame).slice(2) : [0,0]));
+        const rotated = !!(d.textureRotated || d.rotated);
+        const [ox, oy] = plistNums(d.spriteOffset || d.offset || '{0,0}');
+        const [srcW, srcH] = plistNums(d.spriteSourceSize || d.sourceSize || `{${w},${h}}`);
+        frames[name] = { x, y, w, h, rotated, ox, oy, srcW, srcH };
+      }
+      iconCache[base] = { img, frames };
+      return iconCache[base];
+    }
+
+    function drawTintedFrame(ctx, img, frame, tintHex, destSize) {
+      if (!frame) return;
+      const off = document.createElement('canvas');
+      off.width = frame.srcW || 60;
+      off.height = frame.srcH || 60;
+      const octx = off.getContext('2d');
+
+      const sx = Math.round((off.width - frame.w) / 2 + frame.ox);
+      const sy = Math.round((off.height - frame.h) / 2 - frame.oy);
+
+      if (frame.rotated) {
+        octx.save();
+        octx.translate(sx, sy + frame.h);
+        octx.rotate(-Math.PI / 2);
+        octx.drawImage(img, frame.x, frame.y, frame.h, frame.w, 0, 0, frame.h, frame.w);
+        octx.restore();
+      } else {
+        octx.drawImage(img, frame.x, frame.y, frame.w, frame.h, sx, sy, frame.w, frame.h);
+      }
+
+      if (tintHex) {
+        const rgb = hexToRgb(tintHex);
+        const imgData = octx.getImageData(0, 0, off.width, off.height);
+        const d = imgData.data;
+        for (let i = 0; i < d.length; i += 4) {
+          d[i]     = (d[i] * rgb.r) / 255;
+          d[i + 1] = (d[i + 1] * rgb.g) / 255;
+          d[i + 2] = (d[i + 2] * rgb.b) / 255;
+        }
+        octx.putImageData(imgData, 0, 0);
+      }
+
+      const scale = Math.min(destSize / off.width, destSize / off.height) * 0.88;
+      const dw = off.width * scale;
+      const dh = off.height * scale;
+      ctx.drawImage(off, (destSize - dw) / 2, (destSize - dh) / 2, dw, dh);
+    }
+
+    async function renderGDIconToCanvas(canvas, iconData) {
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const base = (iconData && iconData.player) || 'player_01';
+      const c1 = (iconData && iconData.mainColor) || '04FF00';
+      const c2 = (iconData && iconData.secondaryColor) || '00FBFF';
+
+      try {
+        const atlas = await loadIconAtlasData(base);
+        const fSecondary = atlas.frames[`${base}_2_001.png`];
+        const fMain = atlas.frames[`${base}_001.png`];
+        const fExtra = atlas.frames[`${base}_extra_001.png`];
+        drawTintedFrame(ctx, atlas.img, fSecondary, c2, canvas.width);
+        drawTintedFrame(ctx, atlas.img, fMain, c1, canvas.width);
+        drawTintedFrame(ctx, atlas.img, fExtra, 'FFFFFF', canvas.width);
+      } catch (e) {
+        ctx.fillStyle = '#' + c1;
+        ctx.fillRect(8, 8, canvas.width - 16, canvas.height - 16);
+      }
+    }
+
+    // --- AUTH & UI LOGIC ---
+    function switchAuthTab(mode) {
+      authMode = mode;
+      document.getElementById('tabLogin').classList.toggle('active', mode === 'login');
+      document.getElementById('tabRegister').classList.toggle('active', mode === 'register');
+      document.getElementById('authSubmitBtn').textContent = mode === 'login' ? 'Login to Account' : 'Create Account';
+      document.getElementById('authError').style.display = 'none';
+    }
+
+    function getLocalIconConfig() {
+      return {
+        player: localStorage.getItem('iconCurrentPlayer') || 'player_01',
+        mainColor: localStorage.getItem('iconMainColor') || '04FF00',
+        secondaryColor: localStorage.getItem('iconSecondaryColor') || '00FBFF'
+      };
+    }
+
+    function applyUserIconToLocal(user) {
+      if (!user || !user.lastIcon) return;
+      if (user.lastIcon.player) localStorage.setItem('iconCurrentPlayer', user.lastIcon.player);
+      if (user.lastIcon.mainColor) localStorage.setItem('iconMainColor', user.lastIcon.mainColor);
+      if (user.lastIcon.secondaryColor) localStorage.setItem('iconSecondaryColor', user.lastIcon.secondaryColor);
+    }
+
+    async function handleAuthSubmit(e) {
+      e.preventDefault();
+      const errEl = document.getElementById('authError');
+      errEl.style.display = 'none';
+      const username = document.getElementById('authUsername').value.trim();
+      const password = document.getElementById('authPassword').value;
+
+      try {
+        const endpoint = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, lastIcon: getLocalIconConfig() })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Authentication failed');
+        currentUser = data.user;
+        applyUserIconToLocal(currentUser);
+        updatePortalUI();
+        loadLeaderboard();
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = 'block';
+      }
+    }
+
+    async function handleLogout() {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      currentUser = null;
+      updatePortalUI();
+    }
+
+    function updatePortalUI() {
+      const authSec = document.getElementById('authSection');
+      const dashSec = document.getElementById('dashboardSection');
+      if (currentUser) {
+        authSec.style.display = 'none';
+        dashSec.style.display = 'block';
+        document.getElementById('welcomeUsername').textContent = currentUser.username;
+        document.getElementById('myListPoints').textContent = `★ ${currentUser.listPoints || 0} List Points`;
+        document.getElementById('myWinLoss').textContent = `${currentUser.wins || 0}W - ${currentUser.losses || 0}L`;
+        renderGDIconToCanvas(document.getElementById('myIconCanvas'), currentUser.lastIcon);
+      } else {
+        authSec.style.display = 'block';
+        dashSec.style.display = 'none';
+      }
+    }
+
+    function toggleLeaderboardSection() {
+      const el = document.getElementById('leaderboardSection');
+      el.scrollIntoView({ behavior: 'smooth' });
+      loadLeaderboard();
+    }
+
+    async function loadLeaderboard() {
+      try {
+        const res = await fetch('/api/leaderboard');
+        const data = await res.json();
+        const listEl = document.getElementById('leaderboardList');
+        listEl.innerHTML = '';
+
+        if (!data.leaderboard || data.leaderboard.length === 0) {
+          listEl.innerHTML = '<div style="text-align:center; padding: 24px; color: #aaa;">No players ranked yet! Create an account and win a 1v1 match to claim #1!</div>';
+        } else {
+          data.leaderboard.forEach((entry) => {
+            const row = document.createElement('div');
+            row.className = 'lb-row';
+            row.innerHTML = `
+              <div class="lb-left">
+                <div class="lb-rank">#${entry.rank}</div>
+                <div class="icon-canvas-wrap" style="width:46px;height:46px;">
+                  <canvas width="40" height="40" id="lb_icon_${entry.rank}"></canvas>
+                </div>
+                <div>
+                  <div class="lb-name">${entry.username}</div>
+                  <div style="font-size:0.8rem; color:#8ce0ff;">${entry.wins} Wins · ${entry.losses} Losses</div>
+                </div>
+              </div>
+              <div class="lb-right">
+                <div class="lb-points">★ ${entry.listPoints} pts</div>
+              </div>
+            `;
+            listEl.appendChild(row);
+            renderGDIconToCanvas(row.querySelector(`#lb_icon_${entry.rank}`), entry.lastIcon);
+          });
+        }
+
+        if (data.levels) {
+          const grid = document.getElementById('levelsPointGrid');
+          grid.innerHTML = data.levels.map(l => `
+            <div class="level-pill">
+              <span>${l.name} <small style="color:#aaa;">(${l.difficulty})</small></span>
+              <span class="level-pts">+${l.points} pts</span>
+            </div>
+          `).join('');
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function initPortal() {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (res.ok) {
+          const data = await res.json();
+          currentUser = data.user;
+          // Also sync local storage icon if changed recently
+          const localIcon = getLocalIconConfig();
+          if (localIcon.player) {
+            await fetch('/api/sync-icon', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(localIcon)
+            });
+            currentUser.lastIcon = localIcon;
+          }
+        }
+      } catch (e) {}
+      updatePortalUI();
+      loadLeaderboard();
+    }
+
+    initPortal();
+  </script>
+</body>
 </html>
